@@ -21,6 +21,36 @@ const frenchTypes = {
   fairy: "Fée"
 };
 
+
+const gymTypeThemes = {
+  normal: { accent: "#d3bf84", accent2: "#b6a06f", bg: "#18140f", bg2: "#241d16", glow: "rgba(211, 191, 132, 0.34)" },
+  fire: { accent: "#ff8d5c", accent2: "#ff4f3a", bg: "#1e0b08", bg2: "#35120d", glow: "rgba(255, 93, 48, 0.35)" },
+  water: { accent: "#6ed8ff", accent2: "#3f87ff", bg: "#081423", bg2: "#102c43", glow: "rgba(94, 182, 255, 0.36)" },
+  electric: { accent: "#ffe36b", accent2: "#ffbf3f", bg: "#1a1402", bg2: "#2a2005", glow: "rgba(255, 214, 87, 0.38)" },
+  grass: { accent: "#8be183", accent2: "#43c16f", bg: "#09180f", bg2: "#102a1a", glow: "rgba(102, 229, 132, 0.35)" },
+  ice: { accent: "#9bf6ff", accent2: "#65d9ff", bg: "#071922", bg2: "#0f2a33", glow: "rgba(148, 244, 255, 0.38)" },
+  fighting: { accent: "#ff9b84", accent2: "#e25748", bg: "#210c0c", bg2: "#3a1613", glow: "rgba(255, 135, 107, 0.35)" },
+  poison: { accent: "#c38cff", accent2: "#9b57e8", bg: "#170a23", bg2: "#2a123d", glow: "rgba(187, 124, 255, 0.34)" },
+  ground: { accent: "#dcb774", accent2: "#be8a4f", bg: "#191109", bg2: "#2a1b0d", glow: "rgba(230, 188, 116, 0.36)" },
+  flying: { accent: "#b8c2ff", accent2: "#8da5ff", bg: "#0b1020", bg2: "#151f3a", glow: "rgba(170, 186, 255, 0.35)" },
+  psychic: { accent: "#ff99d7", accent2: "#ff619e", bg: "#220b17", bg2: "#3a1526", glow: "rgba(255, 139, 198, 0.34)" },
+  bug: { accent: "#b7df57", accent2: "#80b144", bg: "#121905", bg2: "#202d0c", glow: "rgba(176, 225, 91, 0.35)" },
+  rock: { accent: "#c8b697", accent2: "#a88a6f", bg: "#17120e", bg2: "#282019", glow: "rgba(205, 180, 149, 0.33)" },
+  ghost: { accent: "#a495ff", accent2: "#7266d9", bg: "#110d24", bg2: "#20193d", glow: "rgba(148, 130, 255, 0.35)" },
+  dragon: { accent: "#8da8ff", accent2: "#5d63ff", bg: "#0a1030", bg2: "#151f4a", glow: "rgba(114, 142, 255, 0.36)" },
+  dark: { accent: "#b0a49a", accent2: "#726863", bg: "#0c0b0d", bg2: "#1b191f", glow: "rgba(188, 176, 166, 0.28)" },
+  steel: { accent: "#b9d7df", accent2: "#89abb8", bg: "#0a1418", bg2: "#14242e", glow: "rgba(163, 207, 223, 0.33)" },
+  fairy: { accent: "#ffc2ec", accent2: "#ff8fd3", bg: "#210d1f", bg2: "#391833", glow: "rgba(255, 172, 227, 0.35)" }
+};
+
+const defaultTheme = {
+  accent: "#8ee8ff",
+  accent2: "#ff8bd1",
+  bg: "#090511",
+  bg2: "#120b1f",
+  glow: "rgba(142, 232, 255, 0.28)"
+};
+
 const defaultRules = [
   { arena: 1, badges: 0, count: 2, min: 10, max: 12 },
   { arena: 2, badges: 1, count: 2, min: 16, max: 18 },
@@ -82,6 +112,7 @@ function init() {
   renderFinalTeamInputs();
   renderRules(defaultRules);
   bindEvents();
+  applySiteTheme("");
   loadGlobalAutocomplete();
 }
 
@@ -155,15 +186,31 @@ function resetAll() {
   results.innerHTML = "";
   suggestions.innerHTML = "";
   hideStatus();
+  applySiteTheme("");
 }
 
 async function handleTypeChange() {
+  applySiteTheme(typeSelect.value);
+
   if (!typeSelect.value) {
     setStatus("Choisis un type pour générer une équipe.");
     return;
   }
 
   hideStatus();
+}
+
+function applySiteTheme(type) {
+  const theme = gymTypeThemes[type] || defaultTheme;
+  const root = document.documentElement;
+
+  root.style.setProperty("--accent", theme.accent);
+  root.style.setProperty("--accent-2", theme.accent2);
+  root.style.setProperty("--bg", theme.bg);
+  root.style.setProperty("--bg-2", theme.bg2);
+  root.style.setProperty("--type-glow", theme.glow);
+
+  document.body.dataset.gymType = type || "default";
 }
 
 async function loadGlobalAutocomplete() {
