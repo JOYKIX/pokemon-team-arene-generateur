@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cobblemon Gym Scaler</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Cobblemon Tool</p>
+        <h1>Générateur de teams d’arène</h1>
+        <p>
+          Renseigne le type de ton arène et ta team finale. Le site génère les teams adaptées
+          selon les badges du challenger.
+        </p>
+      </div>
+      <button id="resetBtn">Réinitialiser</button>
+    </header>
+
+    <section class="card">
+      <div class="section-title">
+        <div>
+          <h2>Configuration</h2>
+          <p>La team finale correspond exactement à l’Arène 8.</p>
+        </div>
+        <button id="generateBtn" class="primary">Générer les teams</button>
+      </div>
+
+      <div class="grid two">
+        <label>
+          Type de l’arène
+          <select id="gymType">
+            <option value="">Choisir un type</option>
+          </select>
+        </label>
+
+        <label>
+          Mode de génération
+          <select id="mode">
+            <option value="balanced">Équilibré</option>
+            <option value="strong">Plus fort possible</option>
+            <option value="random">Plus aléatoire</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="final-team">
+        <h3>Team finale / Arène 8</h3>
+        <p>
+          Cette team sera utilisée telle quelle pour l’Arène 8.
+          Si elle est vide, le site génère une team finale aléatoire du type choisi.
+        </p>
+
+        <div id="finalTeamInputs" class="pokemon-inputs"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <div>
+          <h2>Règles par arène</h2>
+          <p>Arène 1 = 0 badge. Arène 8 = 7 badges.</p>
+        </div>
+        <button id="defaultRulesBtn">Règles par défaut</button>
+      </div>
+
+      <div class="rules-table">
+        <div class="rules-head">
+          <span>Arène</span>
+          <span>Badges</span>
+          <span>Pokémon</span>
+          <span>Niveau min</span>
+          <span>Niveau max</span>
+        </div>
+        <div id="rulesBody"></div>
+      </div>
+    </section>
+
+    <section id="status" class="status hidden"></section>
+
+    <section id="results" class="results"></section>
+  </main>
+
+  <datalist id="pokemonSuggestions"></datalist>
+
+  <script src="script.js"></script>
+</body>
+</html>
