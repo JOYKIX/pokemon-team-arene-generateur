@@ -285,12 +285,28 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
   const levels = makeLevelSpread(rule.count, rule.min, rule.max);
 
   if (rule.arena === 8) {
-    const team = finalTeam.slice(0, rule.count).map((slot, index) => ({
+    let team = finalTeam.slice(0, rule.count).map((slot, index) => ({
       ...slot,
       level: levels[index] ?? rule.max,
       ability: slot.ability || pickBestAbility(slot.pokemon),
       moveset: slot.moveset || []
-    })).sort((a, b) => a.level - b.level);
+    }));
+
+    if (team.length < rule.count) {
+      const extraLevels = levels.slice(team.length, rule.count);
+      const extra = await buildRandomTeam({
+        type,
+        count: rule.count - team.length,
+        maxLevel: rule.max,
+        mode,
+        already: team,
+        levels: extraLevels
+      });
+
+      team = [...team, ...extra];
+    }
+
+    team = team.slice(0, rule.count).sort((a, b) => a.level - b.level);
 
     await Promise.all(team.map(async slot => {
       slot.moveset = await buildMoveset(slot.pokemon, slot.level);
