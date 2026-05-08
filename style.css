@@ -178,6 +178,12 @@ select:focus {
   gap: 0.8rem;
 }
 
+.final-slot-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.45rem;
+}
+
 .rules-table {
   overflow-x: auto;
 }
