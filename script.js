@@ -46,6 +46,12 @@ const evolutionMethodMinimums = {
   unknown: 30
 };
 
+const gen9ParadoxPokemon = new Set([
+  "great-tusk","scream-tail","brute-bonnet","flutter-mane","slither-wing","sandy-shocks","roaring-moon",
+  "iron-treads","iron-bundle","iron-hands","iron-jugulis","iron-moth","iron-thorns","iron-valiant",
+  "walking-wake","iron-leaves","gouging-fire","raging-bolt","iron-boulder","iron-crown"
+]);
+
 const typeSelect = document.querySelector("#gymType");
 const modeSelect = document.querySelector("#mode");
 const finalTeamInputs = document.querySelector("#finalTeamInputs");
@@ -599,8 +605,9 @@ async function buildRandomTeam({ type, count, maxLevel, mode, already = [], leve
 
     if (mode === "balanced") {
       const bst = scorePokemon(selected.pokemon);
-      const maxReasonableBST = 250 + maxLevel * 6;
-      if (bst > maxReasonableBST) continue;
+      const targetBST = 220 + targetLevel * 5.5;
+      const tolerance = 85;
+      if (Math.abs(bst - targetBST) > tolerance) continue;
     }
 
     team.push(selected);
@@ -645,18 +652,50 @@ async function buildMoveset(pokemon, maxLevel) {
     .filter(move => move.level <= maxLevel)
     .sort((a, b) => b.level - a.level);
 
-  const moves = [];
-
+  const moveDetails = [];
   for (const move of learned) {
-    if (moves.includes(move.name)) continue;
+    if (moveDetails.some(entry => entry.name === move.name)) continue;
     const detail = await getMove(move.name).catch(() => null);
     if (!detail) continue;
-    if (detail.power === null && detail.damage_class?.name === "status") continue;
-    moves.push(move.name);
-    if (moves.length === 4) break;
+    moveDetails.push({ name: move.name, level: move.level, detail, score: scoreMoveForPokemon(pokemon, detail, move.level) });
   }
 
-  return moves;
+  const picked = [];
+  const perClass = new Map();
+
+  moveDetails.sort((a, b) => b.score - a.score).forEach(move => {
+    if (picked.length >= 4) return;
+    const moveClass = move.detail.damage_class?.name || "status";
+    const isStatus = moveClass === "status";
+    if (picked.some(entry => entry.name === move.name)) return;
+    if (move.detail.power === null && !isStatus) return;
+    if (isStatus && picked.filter(entry => (entry.detail.damage_class?.name || "status") === "status").length >= 1) return;
+    if (!isStatus && (perClass.get(moveClass) || 0) >= 2) return;
+
+    picked.push(move);
+    perClass.set(moveClass, (perClass.get(moveClass) || 0) + 1);
+  });
+
+  return picked.map(move => move.name);
+}
+
+function scoreMoveForPokemon(pokemon, moveDetail, learnedAtLevel) {
+  const moveClass = moveDetail.damage_class?.name || "status";
+  const isStatus = moveClass === "status";
+  if (isStatus) return 55 + learnedAtLevel * 0.4;
+
+  const power = moveDetail.power || 0;
+  const accuracy = moveDetail.accuracy ?? 100;
+  const pp = moveDetail.pp || 10;
+  const isStab = pokemon.types.some(slot => slot.type.name === moveDetail.type?.name);
+  const classAttack = getAttackStat(pokemon, moveClass);
+
+  return power + (isStab ? 28 : 0) + accuracy * 0.35 + Math.min(pp, 20) * 0.6 + classAttack * 0.15 + learnedAtLevel * 0.35;
+}
+
+function getAttackStat(pokemon, moveClass) {
+  const statName = moveClass === "special" ? "special-attack" : "attack";
+  return pokemon.stats.find(stat => stat.stat.name === statName)?.base_stat || 0;
 }
 
 async function getFrenchAbilityName(name) {
@@ -991,7 +1030,11 @@ function hasType(pokemon, type) {
 }
 
 function isBannedSpecies(species) {
-  return species.is_legendary || species.is_mythical;
+  return species.is_legendary || species.is_mythical || isParadoxPokemon(species.name);
+}
+
+function isParadoxPokemon(apiName) {
+  return gen9ParadoxPokemon.has(apiName);
 }
 
 function getFamilyFromEvolutionData(evoData) {
@@ -1179,6 +1222,7 @@ function renderTeams(allTeams, type) {
   results.innerHTML = "";
 
   allTeams.forEach(({ rule, team }) => {
+    const teamTotalBst = team.reduce((sum, slot) => sum + scorePokemon(slot.pokemon), 0);
     const card = document.createElement("article");
     card.className = "team-card";
 
@@ -1202,6 +1246,7 @@ function renderTeams(allTeams, type) {
             : ""
         }
         <p>Le Pokémon le plus faible est niveau ${rule.min}, le plus fort est niveau ${rule.max}.</p>
+        <p>BST total de l’équipe : ${teamTotalBst}</p>
       </div>
     `;
 
@@ -1223,12 +1268,14 @@ function renderPokemonCard(slot) {
 
   const abilityLabel = slot.abilityFr || cleanName(slot.ability || pickBestAbility(pokemon));
   const moves = (slot.movesetFr || slot.moveset || []).map(move => `<li>${move}</li>`).join("");
+  const bst = scorePokemon(pokemon);
 
   return `
     <div class="poke-card">
       ${sprite ? `<img src="${sprite}" alt="${getDisplayName(pokemon)}" />` : ""}
       <div class="poke-name">${getDisplayName(pokemon)}</div>
       <div class="poke-level">Niv. ${slot.level}</div>
+      <small>BST : ${bst}</small>
       <div class="types">${types}</div>
       <small>Talent : ${abilityLabel}</small>
       <ul class="moveset">${moves || "<li>Aucun move valide</li>"}</ul>
