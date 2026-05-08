@@ -56,6 +56,7 @@ const resetBtn = document.querySelector("#resetBtn");
 const results = document.querySelector("#results");
 const statusBox = document.querySelector("#status");
 const suggestions = document.querySelector("#pokemonSuggestions");
+const finalFormState = new Map();
 
 let pokemonCache = new Map();
 let speciesCache = new Map();
@@ -83,6 +84,8 @@ function bindEvents() {
   resetBtn.addEventListener("click", resetAll);
   generateBtn.addEventListener("click", generateTeams);
   typeSelect.addEventListener("change", handleTypeChange);
+  finalTeamInputs.addEventListener("input", handleFinalTeamInputEvent);
+  finalTeamInputs.addEventListener("change", handleFinalTeamInputEvent);
 }
 
 function renderTypes() {
@@ -99,9 +102,15 @@ function renderFinalTeamInputs() {
 
   for (let i = 1; i <= 6; i++) {
     const label = document.createElement("label");
+    label.className = "final-slot";
     label.innerHTML = `
       Pokémon ${i}
-      <input class="final-pokemon" list="pokemonSuggestions" placeholder="Ex : Gardevoir" autocomplete="off" />
+      <div class="final-slot-fields">
+        <input class="final-pokemon" data-slot="${i}" list="pokemonSuggestions" placeholder="Ex : Gardevoir" autocomplete="off" />
+        <select class="final-form hidden" data-slot="${i}">
+          <option value="">Forme auto</option>
+        </select>
+      </div>
     `;
     finalTeamInputs.appendChild(label);
   }
@@ -131,6 +140,11 @@ function resetAll() {
   typeSelect.value = "";
   modeSelect.value = "balanced";
   document.querySelectorAll(".final-pokemon").forEach(input => input.value = "");
+  document.querySelectorAll(".final-form").forEach(select => {
+    select.classList.add("hidden");
+    select.innerHTML = '<option value="">Forme auto</option>';
+  });
+  finalFormState.clear();
   renderRules(defaultRules);
   results.innerHTML = "";
   suggestions.innerHTML = "";
@@ -177,10 +191,19 @@ function readRules() {
   });
 }
 
-function readFinalTeamNames() {
+function readFinalTeamSelections() {
   return [...document.querySelectorAll(".final-pokemon")]
-    .map(input => input.value.trim())
-    .filter(Boolean);
+    .map(input => {
+      const rawName = input.value.trim();
+      const slot = input.dataset.slot;
+      const selectedForm = finalFormState.get(slot)?.selected || "";
+
+      return {
+        rawName,
+        forcedForm: selectedForm || ""
+      };
+    })
+    .filter(entry => entry.rawName);
 }
 
 async function generateTeams() {
@@ -189,7 +212,7 @@ async function generateTeams() {
   const type = typeSelect.value;
   const mode = modeSelect.value;
   const rules = readRules();
-  const finalNames = readFinalTeamNames();
+  const finalSelections = readFinalTeamSelections();
 
   if (!type) {
     setStatus("Choisis d’abord le type de l’arène.", "error");
@@ -206,8 +229,8 @@ async function generateTeams() {
 
     let finalTeam;
 
-    if (finalNames.length > 0) {
-      finalTeam = await resolveFinalTeam(finalNames, type);
+    if (finalSelections.length > 0) {
+      finalTeam = await resolveFinalTeam(finalSelections, type);
     } else {
       finalTeam = await buildRandomTeam({
         type,
@@ -243,11 +266,11 @@ async function generateTeams() {
   }
 }
 
-async function resolveFinalTeam(names, type) {
+async function resolveFinalTeam(selections, type) {
   const team = [];
 
-  for (const rawName of names.slice(0, 6)) {
-    const pokemon = await resolvePokemonForGymType(rawName, type);
+  for (const selection of selections.slice(0, 6)) {
+    const pokemon = await resolvePokemonForGymType(selection, type);
 
     if (!hasType(pokemon, type)) {
       throw new Error(`${getDisplayName(pokemon)} n’a pas le type ${frenchTypes[type]}.`);
@@ -280,9 +303,17 @@ async function resolveFinalTeam(names, type) {
   return team;
 }
 
-async function resolvePokemonForGymType(rawName, type) {
-  const apiName = normalizePokemonName(rawName);
-  const initialPokemon = await getPokemon(apiName);
+async function resolvePokemonForGymType(selection, type) {
+  const apiName = normalizePokemonName(selection.rawName);
+  const forcedApiName = selection.forcedForm || "";
+  const initialPokemon = await getPokemon(forcedApiName || apiName);
+
+  if (forcedApiName) {
+    if (!hasType(initialPokemon, type)) {
+      throw new Error(`${getDisplayName(initialPokemon)} n’a pas le type ${frenchTypes[type]}.`);
+    }
+    return initialPokemon;
+  }
 
   if (hasType(initialPokemon, type)) return initialPokemon;
 
@@ -292,6 +323,88 @@ async function resolvePokemonForGymType(rawName, type) {
   if (typedCandidate) return typedCandidate;
 
   return initialPokemon;
+}
+
+async function handleFinalTeamInputEvent(event) {
+  const input = event.target.closest(".final-pokemon");
+  const select = event.target.closest(".final-form");
+
+  if (select) {
+    const slot = select.dataset.slot;
+    const state = finalFormState.get(slot) || {};
+    state.selected = select.value;
+    finalFormState.set(slot, state);
+    return;
+  }
+
+  if (!input) return;
+
+  const slot = input.dataset.slot;
+  const state = finalFormState.get(slot) || {};
+  clearTimeout(state.timer);
+
+  state.timer = setTimeout(() => syncFormSelectorForInput(input), 280);
+  finalFormState.set(slot, state);
+}
+
+async function syncFormSelectorForInput(input) {
+  const slot = input.dataset.slot;
+  const select = finalTeamInputs.querySelector(`.final-form[data-slot="${slot}"]`);
+  if (!select) return;
+
+  const rawName = input.value.trim();
+  if (!rawName) {
+    select.classList.add("hidden");
+    select.innerHTML = '<option value="">Forme auto</option>';
+    finalFormState.set(slot, { selected: "" });
+    return;
+  }
+
+  try {
+    const baseApiName = normalizePokemonName(rawName);
+    const basePokemon = await getPokemon(baseApiName);
+    const species = await getSpecies(basePokemon.species.url);
+    const formOptions = await getFormOptionsFromSpecies(species);
+
+    if (formOptions.length <= 1) {
+      select.classList.add("hidden");
+      select.innerHTML = '<option value="">Forme auto</option>';
+      finalFormState.set(slot, { selected: "" });
+      return;
+    }
+
+    const previous = finalFormState.get(slot)?.selected || "";
+    select.innerHTML = formOptions
+      .map(option => `<option value="${option.value}">${option.label}</option>`)
+      .join("");
+
+    const defaultValue = formOptions.some(opt => opt.value === basePokemon.name)
+      ? basePokemon.name
+      : formOptions[0].value;
+
+    select.value = formOptions.some(opt => opt.value === previous) ? previous : defaultValue;
+    select.classList.remove("hidden");
+    finalFormState.set(slot, { selected: select.value });
+  } catch {
+    select.classList.add("hidden");
+    select.innerHTML = '<option value="">Forme auto</option>';
+    finalFormState.set(slot, { selected: "" });
+  }
+}
+
+async function getFormOptionsFromSpecies(species) {
+  const options = [];
+
+  for (const variety of species.varieties || []) {
+    const apiName = variety.pokemon.name;
+    await hydrateFrenchNames([{ pokemon: { name: apiName, url: variety.pokemon.url } }]);
+    options.push({
+      value: apiName,
+      label: englishToFrench.get(apiName) || cleanName(apiName)
+    });
+  }
+
+  return options;
 }
 
 async function findRegionalCandidates(apiName) {
