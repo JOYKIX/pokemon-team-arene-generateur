@@ -60,6 +60,7 @@ const suggestions = document.querySelector("#pokemonSuggestions");
 let pokemonCache = new Map();
 let speciesCache = new Map();
 let evolutionCache = new Map();
+let moveCache = new Map();
 let typePools = new Map();
 let frenchNameMap = new Map();
 let englishToFrench = new Map();
@@ -259,7 +260,9 @@ async function resolveFinalTeam(names, type) {
       species,
       evoData,
       evolutionMinLevel: evoInfo.minimumLevel,
-      evolutionMethod: evoInfo.methodLabel
+      evolutionMethod: evoInfo.methodLabel,
+      ability: pickBestAbility(pokemon),
+      moveset: await buildMoveset(pokemon, 62)
     });
   }
 
@@ -272,7 +275,9 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
   if (rule.arena === 8) {
     return finalTeam.slice(0, rule.count).map((slot, index) => ({
       ...slot,
-      level: levels[index] ?? rule.max
+      level: levels[index] ?? rule.max,
+      ability: slot.ability || pickBestAbility(slot.pokemon),
+      moveset: slot.moveset || []
     })).sort((a, b) => a.level - b.level);
   }
 
@@ -299,7 +304,9 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
         species,
         evoData: finalSlot.evoData,
         evolutionMinLevel: evoInfo.minimumLevel,
-        evolutionMethod: evoInfo.methodLabel
+        evolutionMethod: evoInfo.methodLabel,
+        ability: pickBestAbility(pokemon),
+        moveset: []
       });
     }
 
@@ -324,16 +331,25 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
   team = uniqueByPokemon(team);
   team = sortTeamByPower(team, mode).slice(0, rule.count);
 
-  return team.map((slot, index) => ({
+  const leveledTeam = team.map((slot, index) => ({
     ...slot,
-    level: levels[index] ?? rule.max
+    level: levels[index] ?? rule.max,
+    ability: slot.ability || pickBestAbility(slot.pokemon),
+    moveset: slot.moveset || []
   })).sort((a, b) => a.level - b.level);
+
+  await Promise.all(leveledTeam.map(async slot => {
+    if (!slot.moveset.length) slot.moveset = await buildMoveset(slot.pokemon, slot.level);
+  }));
+
+  return leveledTeam;
 }
 
 async function buildRandomTeam({ type, count, maxLevel, mode, already = [] }) {
   const pool = await getPokemonByType(type);
   const shuffled = shuffle([...pool]);
   const usedFamilies = new Set(already.map(slot => slot.species.name));
+  const usedTypeCombos = new Set(already.map(slot => getTypeComboKey(slot.pokemon)));
   const usedPokemon = new Set(already.map(slot => slot.pokemon.name));
   const team = [];
 
@@ -371,7 +387,9 @@ async function buildRandomTeam({ type, count, maxLevel, mode, already = [] }) {
         species: familySpecies,
         evoData,
         evolutionMinLevel: evoInfo.minimumLevel,
-        evolutionMethod: evoInfo.methodLabel
+        evolutionMethod: evoInfo.methodLabel,
+        ability: pickBestAbility(familyPokemon),
+        moveset: []
       });
     }
 
@@ -380,6 +398,9 @@ async function buildRandomTeam({ type, count, maxLevel, mode, already = [] }) {
 
     if (usedPokemon.has(selected.pokemon.name)) continue;
     if (usedFamilies.has(selected.species.name)) continue;
+
+    const typeCombo = getTypeComboKey(selected.pokemon);
+    if (mode === "random" && usedTypeCombos.has(typeCombo)) continue;
 
     if (mode === "balanced") {
       const bst = scorePokemon(selected.pokemon);
@@ -390,9 +411,65 @@ async function buildRandomTeam({ type, count, maxLevel, mode, already = [] }) {
     team.push(selected);
     usedPokemon.add(selected.pokemon.name);
     usedFamilies.add(selected.species.name);
+    usedTypeCombos.add(typeCombo);
   }
 
-  return sortTeamByPower(uniqueByPokemon(team), mode).slice(0, count);
+  let sorted = sortTeamByPower(uniqueByPokemon(team), mode);
+  if (mode === "random") {
+    sorted = sorted.sort((a, b) => scorePokemon(b.pokemon) - scorePokemon(a.pokemon));
+  }
+
+  const finalized = sorted.slice(0, count);
+  await Promise.all(finalized.map(async slot => {
+    slot.moveset = await buildMoveset(slot.pokemon, maxLevel);
+  }));
+
+  return finalized;
+}
+
+
+function getTypeComboKey(pokemon) {
+  return pokemon.types.map(t => t.type.name).sort().join("/");
+}
+
+function pickBestAbility(pokemon) {
+  const preferred = pokemon.abilities
+    .filter(a => !a.is_hidden)
+    .sort((a, b) => a.slot - b.slot)[0] || pokemon.abilities[0];
+  return preferred?.ability?.name || "unknown";
+}
+
+async function buildMoveset(pokemon, maxLevel) {
+  const learned = pokemon.moves
+    .map(move => {
+      const levelDetail = move.version_group_details
+        .filter(d => d.move_learn_method.name === "level-up")
+        .sort((a, b) => b.level_learned_at - a.level_learned_at)[0];
+      return levelDetail ? { name: move.move.name, level: levelDetail.level_learned_at } : null;
+    })
+    .filter(Boolean)
+    .filter(move => move.level <= maxLevel)
+    .sort((a, b) => b.level - a.level);
+
+  const moves = [];
+
+  for (const move of learned) {
+    if (moves.includes(move.name)) continue;
+    const detail = await getMove(move.name).catch(() => null);
+    if (!detail) continue;
+    if (detail.power === null && detail.damage_class?.name === "status") continue;
+    moves.push(move.name);
+    if (moves.length === 4) break;
+  }
+
+  return moves;
+}
+
+async function getMove(name) {
+  if (moveCache.has(name)) return moveCache.get(name);
+  const data = await fetchJson(`${API}/move/${name}`);
+  moveCache.set(name, data);
+  return data;
 }
 
 function selectHighestPossibleEvolution(forms, maxLevel) {
@@ -896,12 +973,17 @@ function renderPokemonCard(slot) {
     .map(entry => `<span class="type-pill">${frenchTypes[entry.type.name] || entry.type.name}</span>`)
     .join("");
 
+  const abilityLabel = cleanName(slot.ability || pickBestAbility(pokemon));
+  const moves = (slot.moveset || []).map(move => `<li>${cleanName(move)}</li>`).join("");
+
   return `
     <div class="poke-card">
       ${sprite ? `<img src="${sprite}" alt="${getDisplayName(pokemon)}" />` : ""}
       <div class="poke-name">${getDisplayName(pokemon)}</div>
       <div class="poke-level">Niv. ${slot.level}</div>
       <div class="types">${types}</div>
+      <small>Talent : ${abilityLabel}</small>
+      <ul class="moveset">${moves || "<li>Aucun move valide</li>"}</ul>
       <small title="${slot.evolutionMethod}">
         ${slot.evolutionMethod} · dispo niv. ${slot.evolutionMinLevel}
       </small>
