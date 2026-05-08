@@ -66,6 +66,7 @@ let abilityFrenchCache = new Map();
 let typePools = new Map();
 let frenchNameMap = new Map();
 let englishToFrench = new Map();
+let allPokemonPool = null;
 
 init();
 
@@ -74,6 +75,7 @@ function init() {
   renderFinalTeamInputs();
   renderRules(defaultRules);
   bindEvents();
+  loadGlobalAutocomplete();
 }
 
 function bindEvents() {
@@ -136,18 +138,22 @@ function resetAll() {
 }
 
 async function handleTypeChange() {
-  const type = typeSelect.value;
-  suggestions.innerHTML = "";
+  if (!typeSelect.value) {
+    setStatus("Choisis un type pour générer une équipe.");
+    return;
+  }
 
-  if (!type) return;
+  hideStatus();
+}
 
-  setStatus("Chargement de l’autocomplétion française...");
+async function loadGlobalAutocomplete() {
+  setStatus("Chargement de l’autocomplétion de tous les Pokémon...");
 
   try {
-    const pool = await getPokemonByType(type);
-    await hydrateFrenchNames(pool.slice(0, 700));
+    const pool = await getAllPokemon();
+    await hydrateFrenchNames(pool);
     renderAutocomplete(pool);
-    setStatus("Autocomplétion chargée.", "success");
+    setStatus("Autocomplétion globale chargée.", "success");
   } catch (error) {
     console.error(error);
     setStatus("Erreur pendant le chargement de l’autocomplétion.", "error");
@@ -710,6 +716,18 @@ async function getPokemonByType(type) {
 
   typePools.set(type, pool);
   return pool;
+}
+
+async function getAllPokemon() {
+  if (allPokemonPool) return allPokemonPool;
+
+  const data = await fetchJson(`${API}/pokemon?limit=1025&offset=0`);
+
+  allPokemonPool = data.results
+    .map(pokemon => ({ pokemon }))
+    .sort((a, b) => getIdFromUrl(a.pokemon.url) - getIdFromUrl(b.pokemon.url));
+
+  return allPokemonPool;
 }
 
 async function hydrateFrenchNames(pool) {
