@@ -689,6 +689,11 @@ async function hydrateFrenchNames(pool) {
       frenchNameMap.set(normalizeKey(frName), apiName);
       frenchNameMap.set(normalizeKey(apiName), apiName);
       frenchNameMap.set(normalizeKey(cleanName(apiName)), apiName);
+
+      const regionalAlias = makeRegionalAlias(baseFrName, formLabel);
+      if (regionalAlias) {
+        frenchNameMap.set(normalizeKey(regionalAlias), apiName);
+      }
     } catch {}
   });
 
@@ -860,15 +865,31 @@ function getRegionalOrFormLabel(apiName, speciesName) {
   return labels[suffix] || cleanName(suffix);
 }
 
+function makeRegionalAlias(baseFrName, formLabel) {
+  if (!formLabel) return "";
+
+  const normalizedForm = normalizeKey(formLabel);
+
+  if (["alola", "galar", "hisui", "paldea"].includes(normalizedForm)) {
+    return `${baseFrName} de ${formLabel}`;
+  }
+
+  return "";
+}
+
 function normalizePokemonName(input) {
   const key = normalizeKey(input);
 
   if (frenchNameMap.has(key)) return frenchNameMap.get(key);
 
-  const regionalMatch = String(input).match(/^(.+?)\s*\((.+?)\)$/);
-  if (regionalMatch) {
-    const namePart = normalizeKey(regionalMatch[1]);
-    const formPart = normalizeKey(regionalMatch[2]);
+  const raw = String(input).trim();
+  const regionalMatch = raw.match(/^(.+?)\s*\((.+?)\)$/);
+  const deRegionalMatch = raw.match(/^(.+?)\s+d[eu]\s+(.+)$/i);
+
+  if (regionalMatch || deRegionalMatch) {
+    const match = regionalMatch || deRegionalMatch;
+    const namePart = normalizeKey(match[1]);
+    const formPart = normalizeKey(match[2]);
 
     for (const [label, apiName] of frenchNameMap.entries()) {
       if (label.includes(namePart) && label.includes(formPart)) {
