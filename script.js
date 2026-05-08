@@ -247,8 +247,7 @@ async function resolveFinalTeam(names, type) {
   const team = [];
 
   for (const rawName of names.slice(0, 6)) {
-    const apiName = normalizePokemonName(rawName);
-    const pokemon = await getPokemon(apiName);
+    const pokemon = await resolvePokemonForGymType(rawName, type);
 
     if (!hasType(pokemon, type)) {
       throw new Error(`${getDisplayName(pokemon)} n’a pas le type ${frenchTypes[type]}.`);
@@ -279,6 +278,47 @@ async function resolveFinalTeam(names, type) {
   }
 
   return team;
+}
+
+async function resolvePokemonForGymType(rawName, type) {
+  const apiName = normalizePokemonName(rawName);
+  const initialPokemon = await getPokemon(apiName);
+
+  if (hasType(initialPokemon, type)) return initialPokemon;
+
+  const candidates = await findRegionalCandidates(apiName);
+  const typedCandidate = candidates.find(candidate => hasType(candidate, type));
+
+  if (typedCandidate) return typedCandidate;
+
+  return initialPokemon;
+}
+
+async function findRegionalCandidates(apiName) {
+  const pool = await getAllPokemon();
+  const seen = new Set();
+  const candidates = [];
+
+  const baseName = apiName.split("-")[0];
+  const possibleNames = new Set([apiName, baseName]);
+
+  pool.forEach(item => {
+    const name = item.pokemon.name;
+    if (name === apiName || name.startsWith(`${baseName}-`)) {
+      possibleNames.add(name);
+    }
+  });
+
+  for (const name of possibleNames) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+
+    const pokemon = await getPokemon(name).catch(() => null);
+    if (!pokemon) continue;
+    candidates.push(pokemon);
+  }
+
+  return candidates;
 }
 
 async function buildTeamForRule({ type, rule, finalTeam, mode }) {
