@@ -356,3 +356,5 @@ select:focus {
     grid-template-columns: 1fr;
   }
 }
+.moveset { margin: 0.35rem 0 0.2rem; padding-left: 1rem; color: var(--muted); font-size: 0.78rem; }
+.moveset li { margin: 0.1rem 0; }
