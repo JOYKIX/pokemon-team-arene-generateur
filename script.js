@@ -61,6 +61,8 @@ let pokemonCache = new Map();
 let speciesCache = new Map();
 let evolutionCache = new Map();
 let moveCache = new Map();
+let moveFrenchCache = new Map();
+let abilityFrenchCache = new Map();
 let typePools = new Map();
 let frenchNameMap = new Map();
 let englishToFrench = new Map();
@@ -255,14 +257,18 @@ async function resolveFinalTeam(names, type) {
     const evoData = await getEvolutionData(species.evolution_chain.url);
     const evoInfo = getEvolutionInfoForPokemon(evoData, pokemon.name);
 
+    const ability = pickBestAbility(pokemon);
+    const moveset = await buildMoveset(pokemon, 62);
     team.push({
       pokemon,
       species,
       evoData,
       evolutionMinLevel: evoInfo.minimumLevel,
       evolutionMethod: evoInfo.methodLabel,
-      ability: pickBestAbility(pokemon),
-      moveset: await buildMoveset(pokemon, 62)
+      ability,
+      abilityFr: await getFrenchAbilityName(ability),
+      moveset,
+      movesetFr: await getFrenchMoveset(moveset)
     });
   }
 
@@ -273,17 +279,27 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
   const levels = makeLevelSpread(rule.count, rule.min, rule.max);
 
   if (rule.arena === 8) {
-    return finalTeam.slice(0, rule.count).map((slot, index) => ({
+    const team = finalTeam.slice(0, rule.count).map((slot, index) => ({
       ...slot,
       level: levels[index] ?? rule.max,
       ability: slot.ability || pickBestAbility(slot.pokemon),
       moveset: slot.moveset || []
     })).sort((a, b) => a.level - b.level);
+
+    await Promise.all(team.map(async slot => {
+      slot.moveset = await buildMoveset(slot.pokemon, slot.level);
+      slot.movesetFr = await getFrenchMoveset(slot.moveset);
+      slot.abilityFr = await getFrenchAbilityName(slot.ability || pickBestAbility(slot.pokemon));
+    }));
+
+    return team;
   }
 
   const candidates = [];
 
-  for (const finalSlot of finalTeam) {
+  for (let idx = 0; idx < Math.min(finalTeam.length, rule.count); idx++) {
+    const finalSlot = finalTeam[idx];
+    const slotLevel = levels[idx] ?? rule.max;
     const family = getFamilyFromEvolutionData(finalSlot.evoData);
     const possibleForms = [];
 
@@ -296,8 +312,7 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
       if (isBannedSpecies(species)) continue;
 
       const evoInfo = getEvolutionInfoForPokemon(finalSlot.evoData, pokemon.name);
-
-      if (evoInfo.minimumLevel > rule.max) continue;
+      if (evoInfo.minimumLevel > slotLevel) continue;
 
       possibleForms.push({
         pokemon,
@@ -306,46 +321,50 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
         evolutionMinLevel: evoInfo.minimumLevel,
         evolutionMethod: evoInfo.methodLabel,
         ability: pickBestAbility(pokemon),
-        moveset: []
+        moveset: [],
+        level: slotLevel
       });
     }
 
-    const selected = selectHighestPossibleEvolution(possibleForms, rule.max);
+    const selected = selectHighestPossibleEvolution(possibleForms, slotLevel);
     if (selected) candidates.push(selected);
   }
 
   let team = uniqueByPokemon(candidates);
 
   if (team.length < rule.count) {
+    const extraLevels = levels.slice(team.length, rule.count);
     const extra = await buildRandomTeam({
       type,
       count: rule.count - team.length,
       maxLevel: rule.max,
       mode,
-      already: team
+      already: team,
+      levels: extraLevels
     });
 
     team = [...team, ...extra];
   }
 
-  team = uniqueByPokemon(team);
-  team = sortTeamByPower(team, mode).slice(0, rule.count);
+  team = uniqueByPokemon(team).slice(0, rule.count);
 
   const leveledTeam = team.map((slot, index) => ({
     ...slot,
-    level: levels[index] ?? rule.max,
+    level: slot.level ?? levels[index] ?? rule.max,
     ability: slot.ability || pickBestAbility(slot.pokemon),
     moveset: slot.moveset || []
   })).sort((a, b) => a.level - b.level);
 
   await Promise.all(leveledTeam.map(async slot => {
-    if (!slot.moveset.length) slot.moveset = await buildMoveset(slot.pokemon, slot.level);
+    slot.moveset = await buildMoveset(slot.pokemon, slot.level);
+    slot.movesetFr = await getFrenchMoveset(slot.moveset);
+    slot.abilityFr = await getFrenchAbilityName(slot.ability || pickBestAbility(slot.pokemon));
   }));
 
   return leveledTeam;
 }
 
-async function buildRandomTeam({ type, count, maxLevel, mode, already = [] }) {
+async function buildRandomTeam({ type, count, maxLevel, mode, already = [], levels = [] }) {
   const pool = await getPokemonByType(type);
   const shuffled = shuffle([...pool]);
   const usedFamilies = new Set(already.map(slot => slot.species.name));
@@ -393,7 +412,8 @@ async function buildRandomTeam({ type, count, maxLevel, mode, already = [] }) {
       });
     }
 
-    const selected = selectHighestPossibleEvolution(familyForms, maxLevel);
+    const targetLevel = levels[team.length] ?? maxLevel;
+    const selected = selectHighestPossibleEvolution(familyForms, targetLevel);
     if (!selected) continue;
 
     if (usedPokemon.has(selected.pokemon.name)) continue;
@@ -414,14 +434,13 @@ async function buildRandomTeam({ type, count, maxLevel, mode, already = [] }) {
     usedTypeCombos.add(typeCombo);
   }
 
-  let sorted = sortTeamByPower(uniqueByPokemon(team), mode);
-  if (mode === "random") {
-    sorted = sorted.sort((a, b) => scorePokemon(b.pokemon) - scorePokemon(a.pokemon));
-  }
+  const sorted = uniqueByPokemon(team).slice(0, count);
+  const finalized = sorted.map((slot, i) => ({ ...slot, level: levels[i] ?? maxLevel }));
 
-  const finalized = sorted.slice(0, count);
   await Promise.all(finalized.map(async slot => {
-    slot.moveset = await buildMoveset(slot.pokemon, maxLevel);
+    slot.moveset = await buildMoveset(slot.pokemon, slot.level);
+    slot.movesetFr = await getFrenchMoveset(slot.moveset);
+    slot.abilityFr = await getFrenchAbilityName(slot.ability || pickBestAbility(slot.pokemon));
   }));
 
   return finalized;
@@ -463,6 +482,27 @@ async function buildMoveset(pokemon, maxLevel) {
   }
 
   return moves;
+}
+
+async function getFrenchAbilityName(name) {
+  if (abilityFrenchCache.has(name)) return abilityFrenchCache.get(name);
+  const data = await fetchJson(`${API}/ability/${name}`);
+  const fr = data.names?.find(n => n.language.name === "fr")?.name || cleanName(name);
+  abilityFrenchCache.set(name, fr);
+  return fr;
+}
+
+async function getFrenchMoveset(moves) {
+  const translated = await Promise.all(moves.map(move => getFrenchMoveName(move)));
+  return translated;
+}
+
+async function getFrenchMoveName(name) {
+  if (moveFrenchCache.has(name)) return moveFrenchCache.get(name);
+  const data = await getMove(name);
+  const fr = data.names?.find(n => n.language.name === "fr")?.name || cleanName(name);
+  moveFrenchCache.set(name, fr);
+  return fr;
 }
 
 async function getMove(name) {
@@ -994,8 +1034,8 @@ function renderPokemonCard(slot) {
     .map(entry => `<span class="type-pill">${frenchTypes[entry.type.name] || entry.type.name}</span>`)
     .join("");
 
-  const abilityLabel = cleanName(slot.ability || pickBestAbility(pokemon));
-  const moves = (slot.moveset || []).map(move => `<li>${cleanName(move)}</li>`).join("");
+  const abilityLabel = slot.abilityFr || cleanName(slot.ability || pickBestAbility(pokemon));
+  const moves = (slot.movesetFr || slot.moveset || []).map(move => `<li>${move}</li>`).join("");
 
   return `
     <div class="poke-card">
