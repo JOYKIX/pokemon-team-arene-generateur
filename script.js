@@ -527,7 +527,9 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
     team = team.slice(0, rule.count).sort((a, b) => a.level - b.level);
 
     const coverageTargets = getTeamWeaknessTargets(team.map(slot => slot.pokemon.types.map(t => t.type.name)));
+    const teamProfile = evaluateTeamSynergy(team);
     await Promise.all(team.map(async slot => {
+      slot.teamProfile = teamProfile;
       slot.moveset = await buildMoveset(slot.pokemon, slot.level, coverageTargets);
       slot.movesetFr = await getFrenchMoveset(slot.moveset);
       slot.abilityFr = await getFrenchAbilityName(slot.ability || pickBestAbility(slot.pokemon));
@@ -597,7 +599,9 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
   })).sort((a, b) => a.level - b.level);
 
   const coverageTargets = getTeamWeaknessTargets(leveledTeam.map(slot => slot.pokemon.types.map(t => t.type.name)));
+  const teamProfile = evaluateTeamSynergy(leveledTeam);
   await Promise.all(leveledTeam.map(async slot => {
+    slot.teamProfile = teamProfile;
     slot.moveset = await buildMoveset(slot.pokemon, slot.level, coverageTargets);
     slot.movesetFr = await getFrenchMoveset(slot.moveset);
     slot.abilityFr = await getFrenchAbilityName(slot.ability || pickBestAbility(slot.pokemon));
@@ -681,7 +685,9 @@ async function buildRandomTeam({ type, count, maxLevel, mode, already = [], leve
   const finalized = sorted.map((slot, i) => ({ ...slot, level: levels[i] ?? maxLevel }));
 
   const coverageTargets = getTeamWeaknessTargets(finalized.map(slot => slot.pokemon.types.map(t => t.type.name)));
+  const teamProfile = evaluateTeamSynergy(finalized);
   await Promise.all(finalized.map(async slot => {
+    slot.teamProfile = teamProfile;
     slot.moveset = await buildMoveset(slot.pokemon, slot.level, coverageTargets);
     slot.movesetFr = await getFrenchMoveset(slot.moveset);
     slot.abilityFr = await getFrenchAbilityName(slot.ability || pickBestAbility(slot.pokemon));
@@ -1288,23 +1294,14 @@ function calcBattleStat(base, iv = 31, ev = 252, level = 50, hp = false) {
   return Math.floor((Math.floor(((2 * base + iv + Math.floor(ev / 4)) * level) / 100) + 5));
 }
 
-function getStatSpread(pokemon, level) {
+function getStatSpread(pokemon, level, teamProfile = null) {
   const base = Object.fromEntries(pokemon.stats.map(s => [s.stat.name, s.base_stat]));
-  const isSpecial = (base['special-attack'] || 0) >= (base.attack || 0);
-  const atkEv = isSpecial ? 0 : 252;
-  const spaEv = isSpecial ? 252 : 0;
+  const roleProfile = determinePokemonRole(pokemon, teamProfile);
   const ivs = { hp: 31, attack: 31, defense: 31, spAttack: 31, spDefense: 31, speed: 31 };
-  const evs = {
-    hp: 6,
-    attack: atkEv,
-    defense: 0,
-    spAttack: spaEv,
-    spDefense: 0,
-    speed: 252
-  };
+  const evs = buildEvSpread(base, roleProfile);
 
   return {
-    role: isSpecial ? 'Spécial' : 'Physique',
+    role: roleProfile.label,
     ivs,
     evs,
     hp: calcBattleStat(base.hp || 1, ivs.hp, evs.hp, level, true),
@@ -1313,6 +1310,116 @@ function getStatSpread(pokemon, level) {
     spAttack: calcBattleStat(base['special-attack'] || 1, ivs.spAttack, evs.spAttack, level),
     spDefense: calcBattleStat(base['special-defense'] || 1, ivs.spDefense, evs.spDefense, level),
     speed: calcBattleStat(base.speed || 1, ivs.speed, evs.speed, level)
+  };
+}
+
+
+
+function determinePokemonRole(pokemon, teamProfile = null) {
+  const base = Object.fromEntries(pokemon.stats.map(s => [s.stat.name, s.base_stat]));
+  const offense = Math.max(base.attack || 0, base["special-attack"] || 0);
+  const bulk = (base.hp || 0) + (base.defense || 0) + (base["special-defense"] || 0);
+  const speed = base.speed || 0;
+  const specialBias = (base["special-attack"] || 0) - (base.attack || 0);
+
+  const needsSpeedControl = Boolean(teamProfile?.weaknessPressure >= 4);
+
+  if (speed >= 105 && offense >= 100) {
+    return { style: specialBias >= 8 ? "special" : "physical", plan: "sweeper", label: specialBias >= 8 ? "Sweeper Spécial" : "Sweeper Physique" };
+  }
+
+  if (bulk >= 260 && offense < 115) {
+    if ((base["special-defense"] || 0) >= (base.defense || 0)) {
+      return { style: "mixed", plan: "special-wall", label: "Mur Spécial" };
+    }
+    return { style: "mixed", plan: "physical-wall", label: "Mur Physique" };
+  }
+
+  if (needsSpeedControl && speed >= 85) {
+    return { style: specialBias >= 0 ? "special" : "physical", plan: "revenge", label: "Revenge Killer" };
+  }
+
+  return {
+    style: specialBias >= 0 ? "special" : "physical",
+    plan: "breaker",
+    label: specialBias >= 0 ? "Breaker Spécial" : "Breaker Physique"
+  };
+}
+
+function buildEvSpread(base, roleProfile) {
+  const evs = { hp: 0, attack: 0, defense: 0, spAttack: 0, spDefense: 0, speed: 0 };
+
+  if (roleProfile.plan === "sweeper" || roleProfile.plan === "revenge") {
+    evs.speed = 252;
+    if (roleProfile.style === "special") evs.spAttack = 252;
+    else evs.attack = 252;
+    evs.hp = 6;
+    return evs;
+  }
+
+  if (roleProfile.plan === "physical-wall") {
+    evs.hp = 252;
+    evs.defense = 252;
+    evs.spDefense = 6;
+    return evs;
+  }
+
+  if (roleProfile.plan === "special-wall") {
+    evs.hp = 252;
+    evs.spDefense = 252;
+    evs.defense = 6;
+    return evs;
+  }
+
+  if (roleProfile.style === "special") {
+    evs.spAttack = 252;
+  } else {
+    evs.attack = 252;
+  }
+
+  if ((base.speed || 0) >= 80) {
+    evs.speed = 252;
+    evs.hp = 6;
+  } else {
+    evs.hp = 252;
+    evs.spDefense = 252 - (evs.attack || evs.spAttack);
+    if (evs.spDefense < 0) evs.spDefense = 6;
+    evs.defense = 6;
+  }
+
+  return rebalanceEvs(evs);
+}
+
+function rebalanceEvs(evs) {
+  const statOrder = ["hp", "attack", "defense", "spAttack", "spDefense", "speed"];
+  statOrder.forEach(stat => {
+    evs[stat] = clamp(Math.round((evs[stat] || 0) / 2) * 2, 0, 252);
+  });
+
+  let total = Object.values(evs).reduce((sum, value) => sum + value, 0);
+  if (total <= 510) return evs;
+
+  for (const stat of statOrder.reverse()) {
+    if (total <= 510) break;
+    const remove = Math.min(evs[stat], total - 510);
+    evs[stat] -= remove;
+    total -= remove;
+  }
+
+  return evs;
+}
+
+function evaluateTeamSynergy(team) {
+  const uniqueCombos = new Set(team.map(slot => getTypeComboKey(slot.pokemon))).size;
+  const weaknesses = getTeamWeaknessTargets(team.map(slot => slot.pokemon.types.map(t => t.type.name)));
+  const weaknessPressure = weaknesses.length;
+  const avgBst = team.reduce((sum, slot) => sum + scorePokemon(slot.pokemon), 0) / Math.max(1, team.length);
+
+  return {
+    uniqueCombos,
+    weaknessPressure,
+    avgBst: Math.round(avgBst),
+    score: uniqueCombos * 22 + (12 - Math.min(12, weaknessPressure)) * 8 + avgBst * 0.12
   };
 }
 
@@ -1357,6 +1464,7 @@ function renderTeams(allTeams, type) {
         }
         <p>Le Pokémon le plus faible est niveau ${rule.min}, le plus fort est niveau ${rule.max}.</p>
         <p>BST total de l’équipe : ${teamTotalBst}</p>
+        <p>Synergie : ${evaluateTeamSynergy(team).score.toFixed(1)} · Couvertures de types uniques ${evaluateTeamSynergy(team).uniqueCombos} · Pression faiblesses ${evaluateTeamSynergy(team).weaknessPressure}</p>
       </div>
     `;
 
@@ -1379,7 +1487,8 @@ function renderPokemonCard(slot) {
   const abilityLabel = slot.abilityFr || cleanName(slot.ability || pickBestAbility(pokemon));
   const moves = (slot.movesetFr || slot.moveset || []).map(move => `<li>${move}</li>`).join("");
   const bst = scorePokemon(pokemon);
-  const statSpread = getStatSpread(pokemon, slot.level);
+  const teamProfile = slot.teamProfile || null;
+  const statSpread = getStatSpread(pokemon, slot.level, teamProfile);
 
   const totalEvs = Object.values(statSpread.evs).reduce((sum, value) => sum + value, 0);
 
