@@ -22,6 +22,18 @@ const frenchTypes = {
 };
 
 
+const typeEffectiveness = {
+  normal:{rock:0.5,ghost:0,steel:0.5}, fire:{fire:0.5,water:0.5,grass:2,ice:2,bug:2,rock:0.5,dragon:0.5,steel:2},
+  water:{fire:2,water:0.5,grass:0.5,ground:2,rock:2,dragon:0.5}, electric:{water:2,electric:0.5,grass:0.5,ground:0,flying:2,dragon:0.5},
+  grass:{fire:0.5,water:2,grass:0.5,poison:0.5,ground:2,flying:0.5,bug:0.5,rock:2,dragon:0.5,steel:0.5}, ice:{fire:0.5,water:0.5,grass:2,ground:2,flying:2,dragon:2,steel:0.5,ice:0.5},
+  fighting:{normal:2,ice:2,poison:0.5,flying:0.5,psychic:0.5,bug:0.5,rock:2,ghost:0,dark:2,steel:2,fairy:0.5}, poison:{grass:2,poison:0.5,ground:0.5,rock:0.5,ghost:0.5,steel:0,fairy:2},
+  ground:{fire:2,electric:2,grass:0.5,poison:2,flying:0,bug:0.5,rock:2,steel:2}, flying:{electric:0.5,grass:2,fighting:2,bug:2,rock:0.5,steel:0.5},
+  psychic:{fighting:2,poison:2,psychic:0.5,dark:0,steel:0.5}, bug:{fire:0.5,grass:2,fighting:0.5,poison:0.5,flying:0.5,psychic:2,ghost:0.5,dark:2,steel:0.5,fairy:0.5},
+  rock:{fire:2,ice:2,fighting:0.5,ground:0.5,flying:2,bug:2,steel:0.5}, ghost:{normal:0,psychic:2,ghost:2,dark:0.5},
+  dragon:{dragon:2,steel:0.5,fairy:0}, dark:{fighting:0.5,psychic:2,ghost:2,dark:0.5,fairy:0.5}, steel:{fire:0.5,water:0.5,electric:0.5,ice:2,rock:2,steel:0.5,fairy:2}, fairy:{fire:0.5,fighting:2,poison:0.5,dragon:2,dark:2,steel:0.5}
+};
+
+
 const gymTypeThemes = {
   normal: { accent: "#d3bf84", accent2: "#b6a06f", bg: "#18140f", bg2: "#241d16", glow: "rgba(211, 191, 132, 0.34)" },
   fire: { accent: "#ff8d5c", accent2: "#ff4f3a", bg: "#1e0b08", bg2: "#35120d", glow: "rgba(255, 93, 48, 0.35)" },
@@ -514,8 +526,9 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
 
     team = team.slice(0, rule.count).sort((a, b) => a.level - b.level);
 
+    const coverageTargets = getTeamWeaknessTargets(team.map(slot => slot.pokemon.types.map(t => t.type.name)));
     await Promise.all(team.map(async slot => {
-      slot.moveset = await buildMoveset(slot.pokemon, slot.level);
+      slot.moveset = await buildMoveset(slot.pokemon, slot.level, coverageTargets);
       slot.movesetFr = await getFrenchMoveset(slot.moveset);
       slot.abilityFr = await getFrenchAbilityName(slot.ability || pickBestAbility(slot.pokemon));
     }));
@@ -583,8 +596,9 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
     moveset: slot.moveset || []
   })).sort((a, b) => a.level - b.level);
 
+  const coverageTargets = getTeamWeaknessTargets(leveledTeam.map(slot => slot.pokemon.types.map(t => t.type.name)));
   await Promise.all(leveledTeam.map(async slot => {
-    slot.moveset = await buildMoveset(slot.pokemon, slot.level);
+    slot.moveset = await buildMoveset(slot.pokemon, slot.level, coverageTargets);
     slot.movesetFr = await getFrenchMoveset(slot.moveset);
     slot.abilityFr = await getFrenchAbilityName(slot.ability || pickBestAbility(slot.pokemon));
   }));
@@ -666,8 +680,9 @@ async function buildRandomTeam({ type, count, maxLevel, mode, already = [], leve
   const sorted = uniqueByPokemon(team).slice(0, count);
   const finalized = sorted.map((slot, i) => ({ ...slot, level: levels[i] ?? maxLevel }));
 
+  const coverageTargets = getTeamWeaknessTargets(finalized.map(slot => slot.pokemon.types.map(t => t.type.name)));
   await Promise.all(finalized.map(async slot => {
-    slot.moveset = await buildMoveset(slot.pokemon, slot.level);
+    slot.moveset = await buildMoveset(slot.pokemon, slot.level, coverageTargets);
     slot.movesetFr = await getFrenchMoveset(slot.moveset);
     slot.abilityFr = await getFrenchAbilityName(slot.ability || pickBestAbility(slot.pokemon));
   }));
@@ -687,7 +702,7 @@ function pickBestAbility(pokemon) {
   return preferred?.ability?.name || "unknown";
 }
 
-async function buildMoveset(pokemon, maxLevel) {
+async function buildMoveset(pokemon, maxLevel, coverageTargets = []) {
   const learned = pokemon.moves
     .map(move => {
       const levelDetail = move.version_group_details
@@ -704,7 +719,7 @@ async function buildMoveset(pokemon, maxLevel) {
     if (moveDetails.some(entry => entry.name === move.name)) continue;
     const detail = await getMove(move.name).catch(() => null);
     if (!detail) continue;
-    moveDetails.push({ name: move.name, level: move.level, detail, score: scoreMoveForPokemon(pokemon, detail, move.level) });
+    moveDetails.push({ name: move.name, level: move.level, detail, score: scoreMoveForPokemon(pokemon, detail, move.level, coverageTargets) });
   }
 
   const picked = [];
@@ -726,7 +741,7 @@ async function buildMoveset(pokemon, maxLevel) {
   return picked.map(move => move.name);
 }
 
-function scoreMoveForPokemon(pokemon, moveDetail, learnedAtLevel) {
+function scoreMoveForPokemon(pokemon, moveDetail, learnedAtLevel, coverageTargets = []) {
   const moveClass = moveDetail.damage_class?.name || "status";
   const isStatus = moveClass === "status";
   if (isStatus) return 55 + learnedAtLevel * 0.4;
@@ -737,7 +752,9 @@ function scoreMoveForPokemon(pokemon, moveDetail, learnedAtLevel) {
   const isStab = pokemon.types.some(slot => slot.type.name === moveDetail.type?.name);
   const classAttack = getAttackStat(pokemon, moveClass);
 
-  return power + (isStab ? 28 : 0) + accuracy * 0.35 + Math.min(pp, 20) * 0.6 + classAttack * 0.15 + learnedAtLevel * 0.35;
+  const coverageBonus = coverageTargets.includes(moveDetail.type?.name) ? 32 : 0;
+  const statBias = (moveClass === "special" ? getAttackStat(pokemon,"special") : getAttackStat(pokemon,"physical"));
+  return power + (isStab ? 28 : 0) + coverageBonus + accuracy * 0.35 + Math.min(pp, 20) * 0.6 + classAttack * 0.15 + learnedAtLevel * 0.35 + statBias * 0.05;
 }
 
 function getAttackStat(pokemon, moveClass) {
@@ -1265,6 +1282,52 @@ function uniqueByPokemon(team) {
   return output;
 }
 
+
+function calcBattleStat(base, iv = 31, ev = 252, level = 50, hp = false) {
+  if (hp) return Math.floor(((2 * base + iv + Math.floor(ev / 4)) * level) / 100) + level + 10;
+  return Math.floor((Math.floor(((2 * base + iv + Math.floor(ev / 4)) * level) / 100) + 5));
+}
+
+function getStatSpread(pokemon, level) {
+  const base = Object.fromEntries(pokemon.stats.map(s => [s.stat.name, s.base_stat]));
+  const isSpecial = (base['special-attack'] || 0) >= (base.attack || 0);
+  const atkEv = isSpecial ? 4 : 252;
+  const spaEv = isSpecial ? 252 : 4;
+  const ivs = { hp: 31, attack: 31, defense: 31, spAttack: 31, spDefense: 31, speed: 31 };
+  const evs = {
+    hp: 252,
+    attack: atkEv,
+    defense: 0,
+    spAttack: spaEv,
+    spDefense: 4,
+    speed: 252
+  };
+
+  return {
+    role: isSpecial ? 'Spécial' : 'Physique',
+    ivs,
+    evs,
+    hp: calcBattleStat(base.hp || 1, ivs.hp, evs.hp, level, true),
+    attack: calcBattleStat(base.attack || 1, ivs.attack, evs.attack, level),
+    defense: calcBattleStat(base.defense || 1, ivs.defense, evs.defense, level),
+    spAttack: calcBattleStat(base['special-attack'] || 1, ivs.spAttack, evs.spAttack, level),
+    spDefense: calcBattleStat(base['special-defense'] || 1, ivs.spDefense, evs.spDefense, level),
+    speed: calcBattleStat(base.speed || 1, ivs.speed, evs.speed, level)
+  };
+}
+
+function getTeamWeaknessTargets(teamTypes) {
+  const weak = new Set();
+  teamTypes.forEach(defTypes => {
+    Object.keys(frenchTypes).forEach(atkType => {
+      let mult = 1;
+      defTypes.forEach(dt => { mult *= (typeEffectiveness[atkType]?.[dt] ?? 1); });
+      if (mult > 1) weak.add(atkType);
+    });
+  });
+  return [...weak];
+}
+
 function renderTeams(allTeams, type) {
   results.innerHTML = "";
 
@@ -1316,6 +1379,7 @@ function renderPokemonCard(slot) {
   const abilityLabel = slot.abilityFr || cleanName(slot.ability || pickBestAbility(pokemon));
   const moves = (slot.movesetFr || slot.moveset || []).map(move => `<li>${move}</li>`).join("");
   const bst = scorePokemon(pokemon);
+  const statSpread = getStatSpread(pokemon, slot.level);
 
   return `
     <div class="poke-card">
@@ -1324,7 +1388,8 @@ function renderPokemonCard(slot) {
       <div class="poke-level">Niv. ${slot.level}</div>
       <small>BST : ${bst}</small>
       <div class="types">${types}</div>
-      <small>Talent : ${abilityLabel}</small>
+      <small>Talent : ${abilityLabel} · Rôle : ${statSpread.role}</small>
+      <small>Stats calculées · PV ${statSpread.hp} / Atk ${statSpread.attack} / Def ${statSpread.defense} / Atk Spé ${statSpread.spAttack} / Def Spé ${statSpread.spDefense} / Vit ${statSpread.speed}</small>\n      <small>IV: PV ${statSpread.ivs.hp}, Atk ${statSpread.ivs.attack}, Def ${statSpread.ivs.defense}, Atk Spé ${statSpread.ivs.spAttack}, Def Spé ${statSpread.ivs.spDefense}, Vit ${statSpread.ivs.speed}</small>\n      <small>EV: PV ${statSpread.evs.hp}, Atk ${statSpread.evs.attack}, Def ${statSpread.evs.defense}, Atk Spé ${statSpread.evs.spAttack}, Def Spé ${statSpread.evs.spDefense}, Vit ${statSpread.evs.speed}</small>
       <ul class="moveset">${moves || "<li>Aucun move valide</li>"}</ul>
       <small title="${slot.evolutionMethod}">
         ${slot.evolutionMethod} · dispo niv. ${slot.evolutionMinLevel}
