@@ -1291,15 +1291,15 @@ function calcBattleStat(base, iv = 31, ev = 252, level = 50, hp = false) {
 function getStatSpread(pokemon, level) {
   const base = Object.fromEntries(pokemon.stats.map(s => [s.stat.name, s.base_stat]));
   const isSpecial = (base['special-attack'] || 0) >= (base.attack || 0);
-  const atkEv = isSpecial ? 4 : 252;
-  const spaEv = isSpecial ? 252 : 4;
+  const atkEv = isSpecial ? 0 : 252;
+  const spaEv = isSpecial ? 252 : 0;
   const ivs = { hp: 31, attack: 31, defense: 31, spAttack: 31, spDefense: 31, speed: 31 };
   const evs = {
-    hp: 252,
+    hp: 6,
     attack: atkEv,
     defense: 0,
     spAttack: spaEv,
-    spDefense: 4,
+    spDefense: 0,
     speed: 252
   };
 
@@ -1381,19 +1381,26 @@ function renderPokemonCard(slot) {
   const bst = scorePokemon(pokemon);
   const statSpread = getStatSpread(pokemon, slot.level);
 
+  const totalEvs = Object.values(statSpread.evs).reduce((sum, value) => sum + value, 0);
+
   return `
     <div class="poke-card">
-      ${sprite ? `<img src="${sprite}" alt="${getDisplayName(pokemon)}" />` : ""}
-      <div class="poke-name">${getDisplayName(pokemon)}</div>
-      <div class="poke-level">Niv. ${slot.level}</div>
-      <small>BST : ${bst}</small>
-      <div class="types">${types}</div>
-      <small>Talent : ${abilityLabel} · Rôle : ${statSpread.role}</small>
-      <small>Stats calculées · PV ${statSpread.hp} / Atk ${statSpread.attack} / Def ${statSpread.defense} / Atk Spé ${statSpread.spAttack} / Def Spé ${statSpread.spDefense} / Vit ${statSpread.speed}</small>\n      <small>IV: PV ${statSpread.ivs.hp}, Atk ${statSpread.ivs.attack}, Def ${statSpread.ivs.defense}, Atk Spé ${statSpread.ivs.spAttack}, Def Spé ${statSpread.ivs.spDefense}, Vit ${statSpread.ivs.speed}</small>\n      <small>EV: PV ${statSpread.evs.hp}, Atk ${statSpread.evs.attack}, Def ${statSpread.evs.defense}, Atk Spé ${statSpread.evs.spAttack}, Def Spé ${statSpread.evs.spDefense}, Vit ${statSpread.evs.speed}</small>
+      <div class="poke-top">
+        ${sprite ? `<img src="${sprite}" alt="${getDisplayName(pokemon)}" />` : ""}
+        <div>
+          <div class="poke-name">${getDisplayName(pokemon)}</div>
+          <div class="poke-level">Niv. ${slot.level}</div>
+          <div class="types">${types}</div>
+        </div>
+      </div>
+      <div class="meta-row"><span class="k">BST</span><span class="v">${bst}</span></div>
+      <div class="meta-row"><span class="k">Talent</span><span class="v">${abilityLabel}</span></div>
+      <div class="meta-row"><span class="k">Rôle</span><span class="v">${statSpread.role}</span></div>
+      <div class="stat-row"><span class="k">Stats finales</span><span class="v">PV ${statSpread.hp} · Atk ${statSpread.attack} · Def ${statSpread.defense} · Atk Spé ${statSpread.spAttack} · Def Spé ${statSpread.spDefense} · Vit ${statSpread.speed}</span></div>
+      <div class="split-row"><span class="k">IV (max 31)</span><span class="v">PV ${statSpread.ivs.hp} / Atk ${statSpread.ivs.attack} / Def ${statSpread.ivs.defense} / Atk Spé ${statSpread.ivs.spAttack} / Def Spé ${statSpread.ivs.spDefense} / Vit ${statSpread.ivs.speed}</span></div>
+      <div class="split-row"><span class="k">EV (max 252/stat)</span><span class="v">PV ${statSpread.evs.hp} / Atk ${statSpread.evs.attack} / Def ${statSpread.evs.defense} / Atk Spé ${statSpread.evs.spAttack} / Def Spé ${statSpread.evs.spDefense} / Vit ${statSpread.evs.speed} · Total ${totalEvs}/510</span></div>
       <ul class="moveset">${moves || "<li>Aucun move valide</li>"}</ul>
-      <small title="${slot.evolutionMethod}">
-        ${slot.evolutionMethod} · dispo niv. ${slot.evolutionMinLevel}
-      </small>
+      <div class="meta-row" title="${slot.evolutionMethod}"><span class="k">Évolution</span><span class="v">${slot.evolutionMethod} · dispo niv. ${slot.evolutionMinLevel}</span></div>
     </div>
   `;
 }
