@@ -1293,14 +1293,26 @@ function getStatSpread(pokemon, level) {
   const isSpecial = (base['special-attack'] || 0) >= (base.attack || 0);
   const atkEv = isSpecial ? 4 : 252;
   const spaEv = isSpecial ? 252 : 4;
+  const ivs = { hp: 31, attack: 31, defense: 31, spAttack: 31, spDefense: 31, speed: 31 };
+  const evs = {
+    hp: 252,
+    attack: atkEv,
+    defense: 0,
+    spAttack: spaEv,
+    spDefense: 4,
+    speed: 252
+  };
+
   return {
     role: isSpecial ? 'Spécial' : 'Physique',
-    hp: calcBattleStat(base.hp || 1, 31, 252, level, true),
-    attack: calcBattleStat(base.attack || 1, 31, atkEv, level),
-    defense: calcBattleStat(base.defense || 1, 31, 0, level),
-    spAttack: calcBattleStat(base['special-attack'] || 1, 31, spaEv, level),
-    spDefense: calcBattleStat(base['special-defense'] || 1, 31, 4, level),
-    speed: calcBattleStat(base.speed || 1, 31, 252, level)
+    ivs,
+    evs,
+    hp: calcBattleStat(base.hp || 1, ivs.hp, evs.hp, level, true),
+    attack: calcBattleStat(base.attack || 1, ivs.attack, evs.attack, level),
+    defense: calcBattleStat(base.defense || 1, ivs.defense, evs.defense, level),
+    spAttack: calcBattleStat(base['special-attack'] || 1, ivs.spAttack, evs.spAttack, level),
+    spDefense: calcBattleStat(base['special-defense'] || 1, ivs.spDefense, evs.spDefense, level),
+    speed: calcBattleStat(base.speed || 1, ivs.speed, evs.speed, level)
   };
 }
 
@@ -1377,7 +1389,7 @@ function renderPokemonCard(slot) {
       <small>BST : ${bst}</small>
       <div class="types">${types}</div>
       <small>Talent : ${abilityLabel} · Rôle : ${statSpread.role}</small>
-      <small>Stats (IV 31 / EV optimisés) · PV ${statSpread.hp} / Atk ${statSpread.attack} / Def ${statSpread.defense} / Atk Spé ${statSpread.spAttack} / Def Spé ${statSpread.spDefense} / Vit ${statSpread.speed}</small>
+      <small>Stats calculées · PV ${statSpread.hp} / Atk ${statSpread.attack} / Def ${statSpread.defense} / Atk Spé ${statSpread.spAttack} / Def Spé ${statSpread.spDefense} / Vit ${statSpread.speed}</small>\n      <small>IV: PV ${statSpread.ivs.hp}, Atk ${statSpread.ivs.attack}, Def ${statSpread.ivs.defense}, Atk Spé ${statSpread.ivs.spAttack}, Def Spé ${statSpread.ivs.spDefense}, Vit ${statSpread.ivs.speed}</small>\n      <small>EV: PV ${statSpread.evs.hp}, Atk ${statSpread.evs.attack}, Def ${statSpread.evs.defense}, Atk Spé ${statSpread.evs.spAttack}, Def Spé ${statSpread.evs.spDefense}, Vit ${statSpread.evs.speed}</small>
       <ul class="moveset">${moves || "<li>Aucun move valide</li>"}</ul>
       <small title="${slot.evolutionMethod}">
         ${slot.evolutionMethod} · dispo niv. ${slot.evolutionMinLevel}
