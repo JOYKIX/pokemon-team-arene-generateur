@@ -104,6 +104,7 @@ const resetBtn = document.querySelector("#resetBtn");
 const results = document.querySelector("#results");
 const statusBox = document.querySelector("#status");
 const suggestions = document.querySelector("#pokemonSuggestions");
+const signatureLineInput = document.querySelector("#signatureLine");
 const finalFormState = new Map();
 
 let pokemonCache = new Map();
@@ -189,6 +190,7 @@ function resetAll() {
   typeSelect.value = "";
   modeSelect.value = "balanced";
   document.querySelectorAll(".final-pokemon").forEach(input => input.value = "");
+  signatureLineInput.value = "";
   document.querySelectorAll(".final-form").forEach(select => {
     select.classList.add("hidden");
     select.innerHTML = '<option value="">Forme auto</option>';
@@ -278,6 +280,7 @@ async function generateTeams() {
   const mode = modeSelect.value;
   const rules = readRules();
   const finalSelections = readFinalTeamSelections();
+  const signatureConstraint = await readSignatureConstraint(type);
 
   if (!type) {
     setStatus("Choisis d’abord le type de l’arène.", "error");
@@ -296,6 +299,7 @@ async function generateTeams() {
 
     if (finalSelections.length > 0) {
       finalTeam = await resolveFinalTeam(finalSelections, type);
+      finalTeam = await applySignatureToTeam(finalTeam, signatureConstraint, type, finalRule.max);
     } else {
       finalTeam = await buildRandomTeam({
         type,
@@ -303,6 +307,7 @@ async function generateTeams() {
         maxLevel: finalRule.max,
         mode
       });
+      finalTeam = await applySignatureToTeam(finalTeam, signatureConstraint, type, finalRule.max);
     }
 
     if (finalTeam.length === 0) {
@@ -317,7 +322,8 @@ async function generateTeams() {
         type,
         rule,
         finalTeam,
-        mode
+        mode,
+        signatureConstraint
       });
 
       allTeams.push({ rule, team });
@@ -329,6 +335,24 @@ async function generateTeams() {
     console.error(error);
     setStatus(error.message || "Erreur pendant la génération.", "error");
   }
+}
+
+async function readSignatureConstraint(type) {
+  const rawName = signatureLineInput?.value?.trim();
+  if (!rawName) return null;
+
+  const pokemon = await resolvePokemonForGymType({ rawName, forcedForm: "" }, type);
+  if (!hasType(pokemon, type)) {
+    throw new Error(`${getDisplayName(pokemon)} n’a pas le type ${frenchTypes[type]}.`);
+  }
+
+  const species = await getSpecies(pokemon.species.url);
+  if (isBannedSpecies(species)) {
+    throw new Error(`${getDisplayName(pokemon)} est légendaire, fabuleux ou interdit.`);
+  }
+
+  const evoData = await getEvolutionData(species.evolution_chain.url);
+  return { pokemon, species, evoData };
 }
 
 async function resolveFinalTeam(selections, type) {
@@ -499,7 +523,7 @@ async function findRegionalCandidates(apiName) {
   return candidates;
 }
 
-async function buildTeamForRule({ type, rule, finalTeam, mode }) {
+async function buildTeamForRule({ type, rule, finalTeam, mode, signatureConstraint }) {
   const levels = makeLevelSpread(rule.count, rule.min, rule.max);
 
   if (rule.arena === 8) {
@@ -524,7 +548,19 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
       team = [...team, ...extra];
     }
 
-    team = team.slice(0, rule.count).sort((a, b) => a.level - b.level);
+    if (signatureConstraint) {
+      team = await applySignatureToTeam(team, signatureConstraint, type, rule.max);
+    }
+
+    team = team.slice(0, rule.count);
+    if (signatureConstraint && team.length) {
+      const signatureFamilyNames = new Set(getFamilyFromEvolutionData(signatureConstraint.evoData).map(member => member.name));
+      team.forEach(slot => {
+        if (signatureFamilyNames.has(slot.pokemon.name)) slot.level = rule.max;
+      });
+    }
+
+    team = team.sort((a, b) => a.level - b.level);
 
     const coverageTargets = getTeamWeaknessTargets(team.map(slot => slot.pokemon.types.map(t => t.type.name)));
     const teamProfile = evaluateTeamSynergy(team);
@@ -591,12 +627,27 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
 
   team = uniqueByPokemon(team).slice(0, rule.count);
 
-  const leveledTeam = team.map((slot, index) => ({
+  let leveledTeam = team.map((slot, index) => ({
     ...slot,
     level: slot.level ?? levels[index] ?? rule.max,
     ability: slot.ability || pickBestAbility(slot.pokemon),
     moveset: slot.moveset || []
   })).sort((a, b) => a.level - b.level);
+
+  if (signatureConstraint) {
+    leveledTeam = await applySignatureToTeam(leveledTeam, signatureConstraint, type, rule.max);
+  }
+
+  leveledTeam = leveledTeam
+    .slice(0, rule.count)
+    .map(slot => ({ ...slot, level: slot.level ?? rule.max }));
+
+  if (signatureConstraint && leveledTeam.length) {
+    const signatureFamilyNames = new Set(getFamilyFromEvolutionData(signatureConstraint.evoData).map(member => member.name));
+    leveledTeam.forEach(slot => {
+      if (signatureFamilyNames.has(slot.pokemon.name)) slot.level = rule.max;
+    });
+  }
 
   const coverageTargets = getTeamWeaknessTargets(leveledTeam.map(slot => slot.pokemon.types.map(t => t.type.name)));
   const teamProfile = evaluateTeamSynergy(leveledTeam);
@@ -608,6 +659,59 @@ async function buildTeamForRule({ type, rule, finalTeam, mode }) {
   }));
 
   return leveledTeam;
+}
+
+async function applySignatureToTeam(team, signatureConstraint, type, targetLevel) {
+  if (!signatureConstraint) return team;
+
+  const signatureSlot = await buildSignatureSlot(signatureConstraint, type, targetLevel);
+  const alreadyPresent = team.some(slot => slot.pokemon.name === signatureSlot.pokemon.name);
+  const withoutFamily = team.filter(slot => !isFromSameEvolutionFamily(slot.evoData, signatureConstraint.evoData));
+
+  let updated = alreadyPresent ? team.filter(slot => slot.pokemon.name !== signatureSlot.pokemon.name) : withoutFamily;
+  updated.push(signatureSlot);
+
+  return uniqueByPokemon(updated);
+}
+
+async function buildSignatureSlot(signatureConstraint, type, targetLevel) {
+  const family = getFamilyFromEvolutionData(signatureConstraint.evoData);
+  const forms = [];
+
+  for (const member of family) {
+    const pokemon = await getPokemon(member.name).catch(() => null);
+    if (!pokemon || !hasType(pokemon, type)) continue;
+
+    const species = await getSpecies(pokemon.species.url);
+    if (isBannedSpecies(species)) continue;
+
+    const evoInfo = getEvolutionInfoForPokemon(signatureConstraint.evoData, pokemon.name);
+    if (evoInfo.minimumLevel > targetLevel) continue;
+
+    forms.push({
+      pokemon,
+      species,
+      evoData: signatureConstraint.evoData,
+      evolutionMinLevel: evoInfo.minimumLevel,
+      evolutionMethod: evoInfo.methodLabel,
+      ability: pickBestAbility(pokemon),
+      moveset: [],
+      level: targetLevel
+    });
+  }
+
+  const selected = selectHighestPossibleEvolution(forms, targetLevel);
+  if (!selected) {
+    throw new Error(`Impossible de placer la lignée signature pour le niveau ${targetLevel}.`);
+  }
+
+  return selected;
+}
+
+function isFromSameEvolutionFamily(a, b) {
+  const aFamily = getFamilyFromEvolutionData(a).map(m => m.name);
+  const bFamily = new Set(getFamilyFromEvolutionData(b).map(m => m.name));
+  return aFamily.some(name => bFamily.has(name));
 }
 
 async function buildRandomTeam({ type, count, maxLevel, mode, already = [], levels = [] }) {
